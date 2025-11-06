@@ -1,0 +1,1462 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Método de Treinamento de Xadrez</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Firebase SDKs e TODO o JavaScript do App -->
+    <script type="module">
+        // Importar os módulos necessários do Firebase
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // --- Variáveis Globais de Estado ---
+        let db, auth, userId, appId;
+        let completedTitles = []; // Armazena o progresso do usuário
+        const PROGRESS_DOC_ID = 'bibliography'; // ID do documento no Firestore
+        const ITEMS_PER_PAGE = 5; // Quantos novos itens mostrar por vez
+        let lastFilters = { bibliography: null, userRating: 0, focusedOpenings: [], selectedYear: "Ano 1" }; // Adicionado selectedYear
+
+        // --- Elementos do DOM (definidos como let, inicializados depois) ---
+        let levelSelect, stageSelect, ratingInput, timeInput, generateBtn,
+            outputContainer, objectivesList, totalTimeEl, scheduleBody,
+            tabsContainer, tabsContentContainer, openingWhiteSelect,
+            openingBlack1Select, openingBlack2Select,
+            errorMessageDiv, errorTextSpan; // Elementos de erro
+
+        // --- BIBLIOGRAFIA MASTER CENTRALIZADA (COM DIFICULDADE) ---
+        const masterBibliography = {
+            "Geral": [
+                { "title": "Thinking Like a GM", "min": 2000, "max": 2600, "difficulty": 2 },
+                { "title": "Thinking Like a Super GM", "min": 2400, "max": 2800, "difficulty": 4 },
+                { "title": "Yusupov Training Series - Vol. 1", "min": 1400, "max": 2200, "difficulty": 2 },
+                { "title": "Yusupov Training Series - Vol. 2", "min": 1400, "max": 2200, "difficulty": 2 },
+                { "title": "Yusupov Training Series - Vol. 3", "min": 1400, "max": 2200, "difficulty": 2 },
+                { "title": "Yusupov Training Series - Vol. 4", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Yusupov Training Series - Vol. 5", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Yusupov Training Series - Vol. 6", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Yusupov Training Series - Vol. 7", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Yusupov Training Series - Vol. 8", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Yusupov Training Series - Vol. 9", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Grandmaster Preparation - Vol. 1", "min": 1800, "max": 2200, "difficulty": 4 },
+                { "title": "Grandmaster Preparation - Vol. 2", "min": 1800, "max": 2200, "difficulty": 4 },
+                { "title": "Grandmaster Preparation - Vol. 3", "min": 1800, "max": 2200, "difficulty": 4 },
+                { "title": "Grandmaster Preparation - Vol. 4", "min": 2000, "max": 2600, "difficulty": 4 },
+                { "title": "Grandmaster Preparation - Vol. 5", "min": 2000, "max": 2600, "difficulty": 4 },
+                { "title": "Grandmaster Preparation - Vol. 6", "min": 2000, "max": 2600, "difficulty": 4 }
+            ],
+            "Tática": [
+                { "title": "Shirov – Fire on Board (Vol. I)", "min": 2200, "max": 2600, "difficulty": 4 },
+                { "title": "Shirov – Fire on Board II", "min": 2200, "max": 2600, "difficulty": 4 },
+                { "title": "Winning Chess: Tactics (serie)", "min": 1200, "max": 1800, "difficulty": 1 },
+                { "title": "Gaprindashvili – Imagination in Chess", "min": 2000, "max": 2400, "difficulty": 3 }
+            ],
+            "Cálculo": [],
+            "Partidas": [
+                { "title": "Kasparov – Partidas Selecionadas", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Tal – The Life and Games of Mikhail Tal", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Bronstein - El Ajedrez de Torneo (Zurich 1953)", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Meus Grandes Predecessores - Vol. 1", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Meus Grandes Predecessores - Vol. 2", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Meus Grandes Predecessores - Vol. 3", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Meus Grandes Predecessores - Vol. 4", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Meus Grandes Predecessores - Vol. 5", "min": 2200, "max": 2800, "difficulty": 4 },
+                { "title": "Lessons with a Grandmaster - Vol. 1", "min": 1800, "max": 2400, "difficulty": 4 },
+                { "title": "Lessons with a Grandmaster - Vol. 2", "min": 1800, "max": 2400, "difficulty": 4 },
+                { "title": "Lessons with a Grandmaster - Vol. 3", "min": 1800, "max": 2400, "difficulty": 4 },
+                { "title": "Lessons with a Grandmaster - Vol. 4", "min": 1800, "max": 2400, "difficulty": 4 },
+                { "title": "Grandmaster Games Anthology - Vol. 1", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 2", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 3", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 4", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 5", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 6", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 7", "min": 2000, "max": 2600, "difficulty": 3 },
+                { "title": "Grandmaster Games Anthology - Vol. 8", "min": 2000, "max": 2600, "difficulty": 3 }
+            ],
+            "Finais": [
+                { "title": "Dvoretsky's Analytical Manual", "min": 2000, "max": 2400, "difficulty": 4 },
+                { "title": "Dvoretsky Endgame Manual", "min": 2000, "max": 2600, "difficulty": 4 },
+                { "title": "Shereshevsky – Endgame Strategy", "min": 2000, "max": 2500, "difficulty": 3 },
+                { "title": "Tragicomedy in the Endgame – Mark Dvoretsky", "min": 2300, "max": 2700, "difficulty": 4 },
+                { "title": "100 finais que há de saber", "min": 1600, "max": 2200, "difficulty": 2 }
+            ],
+            "Aberturas": [
+                { "title": "Modern Chess Openings (MCO) - 15th Ed.", "min": 1600, "max": 2200, "tags": ["repertorio_completo"], "difficulty": 2 },
+                
+                // LIVROS "GRANDMASTER REPERTOIRE" (2000-2600)
+                { "title": "GM Repertoire 1: 1.d4 Vol 1 (Avrukh)", "min": 2000, "max": 2600, "tags": ["d4_d5", "semi_fechadas"], "difficulty": 4 },
+                { "title": "GM Repertoire 2: 1.d4 Vol 2 (Avrukh)", "min": 2000, "max": 2600, "tags": ["india_rei", "grunfeld", "semi_fechadas"], "difficulty": 4 },
+                { "title": "GM Repertoire 1A: 1.d4 A Catalã (Avrukh)", "min": 2000, "max": 2600, "tags": ["d4_d5", "semi_fechadas"], "difficulty": 4 },
+                { "title": "GM Repertoire 1B: 1.d4 Gambito da Dama (Avrukh)", "min": 2000, "max": 2600, "tags": ["d4_d5"], "difficulty": 4 },
+                { "title": "GM Repertoire 2A: Indiana do Rei e Grünfeld (Avrukh)", "min": 2000, "max": 2600, "tags": ["india_rei", "grunfeld"], "difficulty": 4 },
+                { "title": "GM Repertoire 3: A Abertura Inglesa Vol 1 (Marin)", "min": 2000, "max": 2600, "tags": ["inglesa", "flanco"], "difficulty": 4 },
+                { "title": "GM Repertoire 4: A Abertura Inglesa Vol 2 (Marin)", "min": 2000, "max": 2600, "tags": ["inglesa", "flanco"], "difficulty": 4 },
+                { "title": "GM Repertoire 5: A Abertura Inglesa Vol 3 (Marin)", "min": 2000, "max": 2600, "tags": ["inglesa", "flanco"], "difficulty": 4 },
+                { "title": "GM Repertoire 6: A Defesa Siciliana (Ftacnik)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire 6A: Vencendo as Anti-Sicilianas (Kotronias)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire 7: A Defesa Caro-Kann (Schandorff)", "min": 2000, "max": 2600, "tags": ["caro_kann"], "difficulty": 4 },
+                { "title": "GM Repertoire 8: A Defesa Grünfeld Vol 1 (Avrukh)", "min": 2000, "max": 2600, "tags": ["grunfeld"], "difficulty": 4 },
+                { "title": "GM Repertoire 9: A Defesa Grünfeld Vol 2 (Avrukh)", "min": 2000, "max": 2600, "tags": ["grunfeld"], "difficulty": 4 },
+                { "title": "GM Repertoire 10: A Defesa Tarrasch (Aagaard/Ntirlis)", "min": 2000, "max": 2600, "tags": ["d4_d5"], "difficulty": 4 },
+                { "title": "GM Repertoire 11: Vencendo Linhas Secundárias de 1.d4 (Avrukh)", "min": 2000, "max": 2600, "tags": ["d4_d5", "semi_fechadas", "flanco"], "difficulty": 4 },
+                { "title": "GM Repertoire 12: A Benoni Moderna (Petrov)", "min": 2000, "max": 2600, "tags": ["semi_fechadas"], "difficulty": 4 },
+                { "title": "GM Repertoire 13: A Espanhola Aberta (Mikhalevski)", "min": 2000, "max": 2600, "tags": ["e4_e5"], "difficulty": 4 },
+                { "title": "GM Repertoire 14: A Defesa Francesa Vol 1 (Berg)", "min": 2000, "max": 2600, "tags": ["francesa"], "difficulty": 4 },
+                { "title": "GM Repertoire 15: A Defesa Francesa Vol 2 (Berg)", "min": 2000, "max": 2600, "tags": ["francesa"], "difficulty": 4 },
+                { "title": "GM Repertoire 16: A Defesa Francesa Vol 3 (Berg)", "min": 2000, "max": 2600, "tags": ["francesa"], "difficulty": 4 },
+                { "title": "GM Repertoire 17: A Eslava Clássica (Avrukh)", "min": 2000, "max": 2600, "tags": ["d4_d5"], "difficulty": 4 },
+                { "title": "GM Repertoire 18: A Siciliana Sveshnikov (Kotronias)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire 19: A Siciliana Dragão Vol 1 (Jones)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire 20: A Semi-Eslava (Schandorff)", "min": 2000, "max": 2600, "tags": ["d4_d5"], "difficulty": 4 },
+                { "title": "GM Repertoire 21: A Siciliana Dragão Vol 2 (Jones)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire: A Defesa Pirc (Marin)", "min": 2000, "max": 2600, "tags": ["semi_abertas"], "difficulty": 4 },
+                { "title": "GM Repertoire: A Defesa Berlinesa (Roiz)", "min": 2000, "max": 2600, "tags": ["e4_e5"], "difficulty": 4 },
+                { "title": "GM Repertoire: 1.e4 vs Siciliana I (Negi)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire: 1.e4 vs Siciliana II (Negi)", "min": 2000, "max": 2600, "tags": ["siciliana"], "difficulty": 4 },
+                { "title": "GM Repertoire: 1.e4 vs Francesa, Caro-Kann & Philidor (Negi)", "min": 2000, "max": 2600, "tags": ["francesa", "caro_kann", "e4_e5"], "difficulty": 4 },
+                { "title": "GM Repertoire: 1.e4 vs Defesas Menores (Negi)", "min": 2000, "max": 2600, "tags": ["semi_abertas"], "difficulty": 4 },
+
+                // LIVROS "STARTING OUT" (1200-1800)
+                { "title": "Starting Out: 1.d4! (Cox)", "min": 1200, "max": 1800, "tags": ["repertorio_completo", "d4_d5", "india_rei", "semi_fechadas"], "difficulty": 1 },
+                { "title": "Starting Out: 1.e4! (McDonald)", "min": 1200, "max": 1800, "tags": ["repertorio_completo", "e4_e5", "siciliana", "francesa", "caro_kann"], "difficulty": 1 },
+                { "title": "Starting Out: Aberturas Abertas (Flear)", "min": 1200, "max": 1800, "tags": ["e4_e5"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Caro-Kann (Jacobs)", "min": 1200, "max": 1800, "tags": ["caro_kann"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Francesa (Jacobs)", "min": 1200, "max": 1800, "tags": ["francesa"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Holandesa (McDonald)", "min": 1200, "max": 1800, "tags": ["semi_fechadas"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Indiana do Rei (Gallagher/Ward)", "min": 1200, "max": 1800, "tags": ["india_rei"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Grünfeld (Gallagher)", "min": 1200, "max": 1800, "tags": ["grunfeld"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Nimzo-Indiana (Ward)", "min": 1200, "max": 1800, "tags": ["semi_fechadas"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Pirc/Moderna (Gallagher/Davies)", "min": 1200, "max": 1800, "tags": ["semi_abertas"], "difficulty": 1 },
+                { "title": "Starting Out: A Defesa Siciliana (Emms)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: A Abertura Inglesa (Ward)", "min": 1200, "max": 1800, "tags": ["inglesa", "flanco"], "difficulty": 1 },
+                { "title": "Starting Out: A Abertura Réti (McDonald)", "min": 1200, "max": 1800, "tags": ["flanco"], "difficulty": 1 },
+                { "title": "Starting Out: A Ruy Lopez (Shaw)", "min": 1200, "max": 1800, "tags": ["e4_e5"], "difficulty": 1 },
+                { "title": "Starting Out: A Partida Escocesa (Emms)", "min": 1200, "max": 1800, "tags": ["e4_e5"], "difficulty": 1 },
+                { "title": "Starting Out: Gambito da Dama Aceito (Raetsky/Chetverik)", "min": 1200, "max": 1800, "tags": ["d4_d5"], "difficulty": 1 },
+                { "title": "Starting Out: Gambito da Dama Recusado (McDonald)", "min": 1200, "max": 1800, "tags": ["d4_d5"], "difficulty": 1 },
+                { "title": "Starting Out: Defesas Eslava e Semi-Eslava (Flear)", "min": 1200, "max": 1800, "tags": ["d4_d5"], "difficulty": 1 },
+                { "title": "Starting Out: Indiana da Dama (Greet)", "min": 1200, "max": 1800, "tags": ["semi_fechadas"], "difficulty": 1 },
+                { "title": "Starting Out: Siciliana Clássica (Palliser)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: Siciliana Najdorf (Palliser)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: Siciliana Sveshnikov (Cox)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: Siciliana Dragão (Martin)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: Siciliana c3 (Emms)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: Ataque Grand Prix (Jones)", "min": 1200, "max": 1800, "tags": ["siciliana"], "difficulty": 1 },
+                { "title": "Starting Out: O Sistema Colle (Palliser)", "min": 1200, "max": 1800, "tags": ["d4_d5", "semi_fechadas"], "difficulty": 1 },
+                { "title": "Starting Out: A Benoni Moderna (Vegh)", "min": 1200, "max": 1800, "tags": ["semi_fechadas"], "difficulty": 1 },
+
+                // Coleção "Xadrez Vitorioso" individualizada:
+                { "title": "Xadrez Vitorioso - Vol. 1 (Seirawan)", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 1 },
+                { "title": "Xadrez Vitorioso - Vol. 2 (Seirawan)", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 1 },
+                { "title": "Xadrez Vitorioso - Vol. 3 (Seirawan)", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 1 },
+                { "title": "Xadrez Vitorioso - Vol. 4 (Seirawan)", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 1 }
+            ],
+            "Estratégia": [
+                { "title": "Estratégia – Pachman", "min": 1800, "max": 2400, "difficulty": 2 },
+                { "title": "Imagination in Chess – Paata Gaprindashvili", "min": 2000, "max": 2400, "difficulty": 3 },
+                { "title": "How to Reassess Your Chess – Jeremy Silman", "min": 1600, "max": 2200, "difficulty": 2 },
+                { "title": "Winning Chess Middlegames", "min": 1600, "max": 2200, "difficulty": 1 },
+                { "title": "Chess Structures: A Grandmaster Guide", "min": 2000, "max": 2600, "difficulty": 4 },
+                { "title": "Manual Completo de Jogo Posicional – Escola Russa", "min": 1800, "max": 2400, "difficulty": 2 },
+                { "title": "Chess-Structures (pdf)", "min": 2000, "max": 2600, "difficulty": 2 }
+            ],
+            "Cursos Online": [
+                // Dificuldade 1 (Ano 1)
+                { "title": "Level 1", "min": 0, "max": 800, "difficulty": 1 },
+                { "title": "Level 2", "min": 800, "max": 1000, "difficulty": 1 },
+                { "title": "Level 3", "min": 1000, "max": 1200, "difficulty": 1 },
+                { "title": "Chess: Year 1", "min": 0, "max": 1000, "difficulty": 1 },
+                { "title": "Complete Chess Course 1", "min": 0, "max": 1000, "difficulty": 1 },
+                { "title": "Chess Tactics for Beginners", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Chess Endings for Beginners", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Learn Chess: From Beginner to Club Player", "min": 0, "max": 1500, "difficulty": 1 },
+                { "title": "Mate in 1 (Chess Puzzles)", "min": 0, "max": 1000, "difficulty": 1 },
+                { "title": "Mate in 2 (Simple puzzles)", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Elementary Chess Tactics 1", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Beginner Tactics Themes 1", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Elementary Chess Tactics 2", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Beginner Tactics Themes 2", "min": 800, "max": 1200, "difficulty": 1 },
+                { "title": "Capturing Pieces 1 (Chess Puzzles)", "min": 0, "max": 800, "difficulty": 1 },
+                { "title": "Capturing Pieces 2 (Chess Puzzles)", "min": 0, "max": 1000, "difficulty": 1 },
+                { "title": "Chess School for Beginners", "min": 0, "max": 800, "difficulty": 1 },
+                { "title": "Mate in 1 (Basic puzzles)", "min": 0, "max": 1000, "difficulty": 1 },
+                { "title": "Chess Opening Ideas. Open Games 1.e4 e5", "min": 1000, "max": 1600, "tags": ["e4_e5"], "difficulty": 1 },
+                { "title": "Chess Opening Ideas. Semi-Open Games 1.e4 non-e5", "min": 1000, "max": 1600, "tags": ["siciliana", "francesa", "caro_kann", "semi_abertas"], "difficulty": 1 },
+                { "title": "Chess Opening Ideas. Closed Games 1.d4 or 1.Nf3", "min": 1000, "max": 1600, "tags": ["d4_d5", "india_rei", "grunfeld", "semi_fechadas", "inglesa", "flanco"], "difficulty": 1 },
+                { "title": "Chess Opening Blunders", "min": 1000, "max": 1600, "tags": ["repertorio_completo"], "difficulty": 1 },
+
+                // Dificuldade 2 (Ano 2)
+                { "title": "Level 4", "min": 1200, "max": 1400, "difficulty": 2 },
+                { "title": "Level 5", "min": 1400, "max": 1500, "difficulty": 2 },
+                { "title": "Level 6", "min": 1500, "max": 1600, "difficulty": 2 },
+                { "title": "Chess: Year 2", "min": 1000, "max": 1400, "difficulty": 2 },
+                { "title": "Chess: Year 3", "min": 1200, "max": 1600, "difficulty": 2 },
+                { "title": "Art Of Defense", "min": 1400, "max": 2000, "difficulty": 2 },
+                { "title": "CT-ART 4.0 (Chess Tactics 1200-2400 ELO)", "min": 1200, "max": 2400, "difficulty": 2 },
+                { "title": "Chess Tactics Art (1400-1600 ELO)", "min": 1400, "max": 1600, "difficulty": 2 },
+                { "title": "CT-ART. Chess Mate Theory", "min": 1000, "max": 1600, "difficulty": 2 },
+                { "title": "Chess Strategy for Beginners", "min": 1000, "max": 1600, "difficulty": 2 },
+                { "title": "Simple Defense (Chess Puzzles)", "min": 1200, "max": 1800, "difficulty": 2 },
+                { "title": "Mate in 2 (Easy puzzles)", "min": 1000, "max": 1400, "difficulty": 2 },
+                { "title": "Mate in 3 (Difficult puzzles)", "min": 1200, "max": 1600, "difficulty": 2 },
+                { "title": "Mate in 4 (Hard puzzles)", "min": 1400, "max": 1800, "difficulty": 2 },
+                { "title": "Complete Chess Course 2", "min": 1000, "max": 1400, "difficulty": 2 },
+                { "title": "Complete Chess Course 3", "min": 1200, "max": 1600, "difficulty": 2 },
+                { "title": "Mate in 2 (Chess Puzzles)", "min": 1000, "max": 1400, "difficulty": 2 },
+                { "title": "Mate in 3-4 (Chess Puzzles)", "min": 1200, "max": 1600, "difficulty": 2 },
+                { "title": "Intermediate Tactics Themes 1", "min": 1200, "max": 1600, "difficulty": 2 },
+                { "title": "Chess Opening Blunders 2", "min": 1200, "max": 1800, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Chess Opening Lab (1400-2000)", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Mate in 2 (Openings 2)", "min": 1200, "max": 1600, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Manual of Chess Combinations", "min": 1200, "max": 1800, "difficulty": 2 },
+                { "title": "Chess Combinations Vol. 1", "min": 1400, "max": 1800, "difficulty": 2 },
+                { "title": "Intermediate Tactics Themes 2", "min": 1200, "max": 1600, "difficulty": 2 },
+                { "title": "Defense and counter attack", "min": 1400, "max": 2000, "difficulty": 2 },
+                { "title": "Chess Middlegame I", "min": 1200, "max": 1800, "difficulty": 2 },
+                { "title": "Mate in 2 (Openings 1)", "min": 1200, "max": 1600, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 1 - Open Games (1. e4 e5)", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 2 - Semi-Open Games (1. e4)", "min": 1400, "max": 2000, "tags": ["siciliana", "francesa", "caro_kann", "semi_abertas"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 3 - Sicilian Defense (1. e4 c5)", "min": 1400, "max": 2000, "tags": ["siciliana"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 4 - Semi-Closed Games (1. d4 Nf6 2. c4 g6)", "min": 1400, "max": 2000, "tags": ["india_rei", "grunfeld"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 5 - Semi-Closed Games (1. d4 Nf6 2. c4 e6)", "min": 1400, "max": 2000, "tags": ["semi_fechadas"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 6 - Closed Games (1. d4 d5)", "min": 1400, "max": 2000, "tags": ["d4_d5"], "difficulty": 2 },
+                { "title": "Modern Chess Openings 7 - Other", "min": 1400, "max": 2000, "tags": ["inglesa", "flanco"], "difficulty": 2 },
+                { "title": "Universal Chess Opening: 1. d4 2. Nf3 3. e3", "min": 1400, "max": 2000, "tags": ["d4_d5", "semi_fechadas"], "difficulty": 2 },
+                { "title": "Chess: a Positional Opening Repertoire", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Chess: An Aggressive Opening Repertoire", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Chess Tactics in Sicilian Defense 1", "min": 1400, "max": 2000, "tags": ["siciliana"], "difficulty": 2 },
+                { "title": "Chess Tactics in French Defense", "min": 1400, "max": 2000, "tags": ["francesa"], "difficulty": 2 },
+                { "title": "Chess Tactics in Caro-Kann Defense", "min": 1400, "max": 2000, "tags": ["caro_kann"], "difficulty": 2 },
+                { "title": "Chess Tactics in Scandinavian Defense", "min": 1400, "max": 2000, "tags": ["semi_abertas"], "difficulty": 2 },
+                { "title": "Chess Tactics in Open Games", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Chess Tactics in Slav Defense", "min": 1400, "max": 2000, "tags": ["d4_d5"], "difficulty": 2 },
+                { "title": "Important Opening Techniques", "min": 1400, "max": 2000, "tags": ["repertorio_completo"], "difficulty": 2 },
+                { "title": "Master the Openings - French Defense", "min": 1400, "max": 2000, "tags": ["francesa"], "difficulty": 2 },
+                { "title": "Master the Openings - Caro-Kann Defense", "min": 1400, "max": 2000, "tags": ["caro_kann"], "difficulty": 2 },
+                { "title": "Master the Openings - Ruy Lopez", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Master the Openings - Open Games", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Master the Openings - Scotch Game and Petrov Defense", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Master the Openings - Two Knights Defense", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Master the Openings - Italian Game and Evans Gambit", "min": 1400, "max": 2000, "tags": ["e4_e5"], "difficulty": 2 },
+                { "title": "Master the Openings - Sicilian Defense", "min": 1400, "max": 2000, "tags": ["siciliana"], "difficulty": 2 },
+                { "title": "Master the Openings - Semi-Open Games", "min": 1400, "max": 2000, "tags": ["siciliana", "francesa", "caro_kann", "semi_abertas"], "difficulty": 2 },
+                { "title": "Master the Openings - Queen’s Gambit", "min": 1400, "max": 2000, "tags": ["d4_d5"], "difficulty": 2 },
+                { "title": "Master the Openings - English Opening", "min": 1400, "max": 2000, "tags": ["inglesa"], "difficulty": 2 },
+
+                // Dificuldade 3 (Ano 3)
+                { "title": "Level 7", "min": 1600, "max": 1800, "difficulty": 3 },
+                { "title": "Level 8", "min": 1800, "max": 2000, "difficulty": 3 },
+                { "title": "Level 9", "min": 2000, "max": 2100, "difficulty": 3 },
+                { "title": "Chess Strategy & Tactics Vol. 2 (1800-2200 ELO)", "min": 1800, "max": 2200, "difficulty": 3 },
+                { "title": "Total Chess Endgames (1600-2400 ELO)", "min": 1600, "max": 2400, "difficulty": 3 },
+                { "title": "Chess Strategy & Tactics Vol. 1 (1600-2000 ELO)", "min": 1600, "max": 2000, "difficulty": 3 },
+                { "title": "Chess Strategy (1800-2400)", "min": 1800, "max": 2400, "difficulty": 3 },
+                { "title": "Chess Tactics Art (1600-1800 ELO)", "min": 1600, "max": 1800, "difficulty": 3 },
+                { "title": "Advanced Defense (Chess Puzzles)", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "Mate Studies", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "Chess Combinations Vol. 2", "min": 1600, "max": 2000, "difficulty": 3 },
+                { "title": "Chess Endgame Studies", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "Chess Middlegame II", "min": 1400, "max": 2000, "difficulty": 3 },
+                { "title": "Chess Middlegame III", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "Chess Tactics in Sicilian Defense 2", "min": 1600, "max": 2200, "tags": ["siciliana"], "difficulty": 3 },
+                { "title": "Chess Tactics in Grünfeld Defense", "min": 1600, "max": 2200, "tags": ["grunfeld"], "difficulty": 3 },
+                { "title": "Chess Tactics in King's Indian Defense", "min": 1600, "max": 2200, "tags": ["india_rei"], "difficulty": 3 },
+                { "title": "Chess Tactics in Volga Gambit", "min": 1600, "max": 2200, "tags": ["semi_fechadas"], "difficulty": 3 },
+                { "title": "Encyclopedia Chess Combinations Vol. 1 Informant", "min": 1400, "max": 2000, "difficulty": 3 },
+                { "title": "Encyclopedia Chess Combinations Vol. 2 Informant", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "Manual of Chess Strategy, volume 1", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "How Champions Play the Opening", "min": 1600, "max": 2200, "tags": ["repertorio_completo"], "difficulty": 3 },
+                { "title": "How Champions Play the Middlegame", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "How Champions Play the Endgame", "min": 1600, "max": 2200, "difficulty": 3 },
+                { "title": "Master the Openings - Grünfeld Defense", "min": 1600, "max": 2200, "tags": ["grunfeld"], "difficulty": 3 },
+                { "title": "Master the Openings - King's Indian Defense", "min": 1600, "max": 2200, "tags": ["india_rei"], "difficulty": 3 },
+                // Campeões (Default Dificuldade 3)
+                { "title": "Alexander Alekhine - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Emanuel Lasker - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Jose Raul Capablanca - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Wilhelm Steinitz - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Max Euwe - World Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Henrique Mecking – Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Bobby Fischer - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Sergey Karjakin - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Mikhail Tal - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Magnus Carlsen - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Garry Kasparov - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Viswanathan Anand - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Vladimir Kramnik - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Mikhail Botvinnik - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Paul Morphy - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Nepomniachtchi Ian - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Anatoly Karpov - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Dīng Lìrén - Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Hikaru Nakamura - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Fabiano Caruana - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Alireza Firouzja – Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Levon Aronian - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Tigran Petrosian - World Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Boris Spassky - World Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Vasily Smyslov - World Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Viktor Korchnoi - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "David Bronstein - Elite Chess Player", "min": 1500, "max": 9999, "difficulty": 3 },
+                { "title": "Dommaraju Gukesh – Chess Champion", "min": 1500, "max": 9999, "difficulty": 3 },
+
+                // Dificuldade 4 (Ano 4)
+                { "title": "Level 10", "min": 2100, "max": 2200, "difficulty": 4 },
+                { "title": "Chess Middlegame IV", "min": 1800, "max": 2400, "difficulty": 4 },
+                { "title": "Chess Middlegame V", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Encyclopedia Chess Combinations Vol. 3 Informant", "min": 1800, "max": 9999, "difficulty": 4 },
+                { "title": "Manual of Chess Strategy, volume 2", "min": 1800, "max": 2400, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky 2", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky 3", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky 4", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky 5", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky 6", "min": 2000, "max": 9999, "difficulty": 4 },
+                { "title": "Training system by Mark Dvoretsky 7", "min": 2000, "max": 9999, "difficulty": 4 }
+            ]
+        };
+
+        // --- OPÇÕES PARA OS NOVOS MENUS DE ABERTURA ---
+        const openingOptions = {
+            "e4_e5": "Aberturas Abertas (1.e4 e5)",
+            "siciliana": "Defesa Siciliana (1.e4 c5)",
+            "francesa": "Defesa Francesa (1.e4 e6)",
+            "caro_kann": "Defesa Caro-Kann (1.e4 c4)",
+            "semi_abertas": "Outras Semi-Abertas (Pirc, Moderna...)",
+            "d4_d5": "Gambito da Dama / Eslava (1.d4 d5)",
+            "india_rei": "Defesa Indiana do Rei",
+            "grunfeld": "Defesa Grünfeld",
+            "semi_fechadas": "Outras Semi-Fechadas (Nimzo, Benoni...)",
+            "inglesa": "Abertura Inglesa (1.c4)",
+            "flanco": "Outras Aberturas de Flanco (Réti...)"
+        };
+
+        // --- BASE DE DADOS DO TREINAMENTO (APENAS CRONOGRAMAS) ---
+        const trainingData = {
+            "Ano 1": {
+                "Estágio 1": {
+                    "objetivos": ["Dominar todas as regras do jogo", "Dominar a anotação", "Jogar as primeiras partidas"],
+                    "defaultTimePerDay": 60,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 60 }],
+                        "Terça": [{ "topic": "Geral", "time": 60 }],
+                        "Quarta": [{ "topic": "Geral", "time": 60 }],
+                        "Quinta": [{ "topic": "Geral", "time": 60 }],
+                        "Sexta": [{ "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 60 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 2": {
+                    "objetivos": ["Conhecer os mates elementares", "Aprender os fundamentos básicos"],
+                    "defaultTimePerDay": 60,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 30 }, { "topic": "Partidas Completas", "time": 30 }],
+                        "Terça": [{ "topic": "Geral", "time": 30 }, { "topic": "Tática", "time": 30 }],
+                        "Quarta": [{ "topic": "Geral", "time": 30 }, { "topic": "Finais", "time": 30 }],
+                        "Quinta": [{ "topic": "Geral", "time": 30 }, { "topic": "Partidas Completas", "time": 30 }],
+                        "Sexta": [{ "topic": "Tática", "time": 30 }, { "topic": "Partidas Online", "time": 30 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 60 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 3": {
+                    "objetivos": ["Aprender os temas táticos básicos", "Aprender os finais elementares", "Ganhar familiaridade com aberturas"],
+                    "defaultTimePerDay": 90,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Partidas Completas", "time": 36 }, { "topic": "Tática", "time": 18 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Partidas Completas", "time": 36 }, { "topic": "Tática", "time": 18 }],
+                        "Sexta": [{ "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }, { "topic": "Partidas Online", "time": 36 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 90 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 4": {
+                    "objetivos": ["Começar a fazer exercícios com regularidade", "Conhecer de memória os finais mais importantes", "Rating online começou a subir?"],
+                    "defaultTimePerDay": 90,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Partidas Completas", "time": 36 }, { "topic": "Tática", "time": 18 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Partidas Completas", "time": 36 }, { "topic": "Tática", "time": 18 }],
+                        "Sexta": [{ "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }, { "topic": "Partidas Online", "time": 36 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 90 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 5": {
+                    "objetivos": ["Xadrez já não é um mistério tão grande quanto no começo", "Terminar pelo menos 1 livro da seção 'Geral'", "Ter alguma familiaridade com os campeões mundiais"],
+                    "defaultTimePerDay": 90,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Partidas Completas", "time": 36 }, { "topic": "Tática", "time": 18 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Partidas Completas", "time": 36 }, { "topic": "Tática", "time": 18 }],
+                        "Sexta": [{ "topic": "Tática", "time": 18 }, { "topic": "Finais", "time": 36 }, { "topic": "Partidas Online", "time": 36 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 90 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                }
+            },
+            "Ano 2": {
+                "Estágio 1 - Aberturas": {
+                    "objetivos": ["Definir um repertório básico", "Aprender a usar o Chessbase", "Criar suas bases de aberturas", "Escolher jogadores modelos para seguir", "Saber o básico e não ficar mais preocupado com Abs"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 48 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 48 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 48 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 48 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 2 - Finais": {
+                    "objetivos": ["Conhecer os finais teóricos mais importantes", "Memorizar as posições mais conhecidas", "Poder dizer: Eu já sei o mínimo sobre finais!", "Consegue ganhar as posições teóricas do computador?", "Ênfase em finais de Rei e Peões e de Torres"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 48 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 48 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 48 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 48 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 3 - Partidas Clássicas": {
+                    "objetivos": ["Ganhar familiaridade com os clássicos", "Ver pelo menos 10 partidas de Morphy a Alekhine"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Partidas Completas", "time": 48 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Partidas Completas", "time": 48 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Partidas Completas", "time": 48 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Partidas Completas", "time": 48 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 4 - Estratégia": {
+                    "objetivos": ["Começar a fazer exercícios com regularidade", "Conhecer de memória os finais mais importantes", "Rating online começou a subir?", "Ter alguma familiaridade com os campeões mundiais"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 48 }],
+                        "Terça": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 48 }],
+                        "Quarta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 48 }],
+                        "Quinta": [{ "topic": "Geral", "time": 36 }, { "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 48 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 5 - Manutenção": {
+                    "objetivos": ["Manutenção e aprimoramento de todos os anteriores"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Geral", "time": 20 }, { "topic": "Tática", "time": 20 }, { "topic": "Partidas Completas", "time": 40 }, { "topic": "Finais", "time": 40 }],
+                        "Terça": [{ "topic": "Geral", "time": 20 }, { "topic": "Tática", "time": 20 }, { "topic": "Aberturas", "time": 40 }, { "topic": "Estratégia", "time": 40 }],
+                        "Quarta": [{ "topic": "Geral", "time": 20 }, { "topic": "Tática", "time": 20 }, { "topic": "Partidas Completas", "time": 40 }, { "topic": "Finais", "time": 40 }],
+                        "Quinta": [{ "topic": "Geral", "time": 20 }, { "topic": "Tática", "time": 20 }, { "topic": "Aberturas", "time": 40 }, { "topic": "Estratégia", "time": 40 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                }
+            },
+            "Ano 3": {
+                "Estágio 1 - Aberturas": {
+                    "objetivos": ["Definir um repertório de longo prazo", "Domínio do Chessbase", "Criar suas bases de aberturas", "Escolher jogadores modelos para seguir", "Saber usar engines nas suas análises de Abs"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 84 }],
+                        "Terça": [{ "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 48 }, { "topic": "Finais", "time": 36 }],
+                        "Quarta": [{ "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 84 }],
+                        "Quinta": [{ "topic": "Tática", "time": 36 }, { "topic": "Aberturas", "time": 48 }, { "topic": "Estratégia", "time": 36 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 2 - Finais": {
+                    "objetivos": ["Conhecer os finais teóricos mais importantes", "Memorizar as posições mais conhecidas", "Poder dizer: Eu já sei bastante sobre finais!", "Consegue ganhar as posições teóricas do computador?", "Começar a aprender sobre técnica de finais"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 84 }],
+                        "Terça": [{ "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 48 }, { "topic": "Aberturas", "time": 36 }],
+                        "Quarta": [{ "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 84 }],
+                        "Quinta": [{ "topic": "Tática", "time": 36 }, { "topic": "Finais", "time": 48 }, { "topic": "Estratégia", "time": 36 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 3 - Estratégia/Clássicos": {
+                    "objetivos": ["Ganhar familiaridade com os clássicos", "Ver pelo menos 10 partidas de Morphy a Kasparov", "Saber avaliar uma posição", "Saber fazer um plano"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 84 }],
+                        "Terça": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 48 }, { "topic": "Aberturas", "time": 36 }],
+                        "Quarta": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 84 }],
+                        "Quinta": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 48 }, { "topic": "Finais", "time": 36 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 4 - Cálculo": {
+                    "objetivos": ["Aprender a calcular de verdade", "Familiaridade com os temas de cálculo", "Já conseguiu resolver algum exercício do Dvora?"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 84 }],
+                        "Terça": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 48 }, { "topic": "Aberturas", "time": 36 }],
+                        "Quarta": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 84 }],
+                        "Quinta": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 48 }, { "topic": "Finais", "time": 36 }],
+                        "Sexta": [{ "topic": "Tática", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 5 - Manutenção": {
+                    "objetivos": ["Manutenção e aprimoramento de todos os anteriores"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 30 }, { "topic": "Geral", "time": 54 }, { "topic": "Aberturas", "time": 36 }],
+                        "Terça": [{ "topic": "Tática", "time": 30 }, { "topic": "Estratégia", "time": 54 }, { "topic": "Finais", "time": 36 }],
+                        "Quarta": [{ "topic": "Tática", "time": 30 }, { "topic": "Geral", "time": 54 }, { "topic": "Aberturas", "time": 36 }],
+                        "Quinta": [{ "topic": "Tática", "time": 30 }, { "topic": "Estratégia", "time": 54 }, { "topic": "Finais", "time": 36 }],
+                        "Sexta": [{ "topic": "Aberturas", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                }
+            },
+            "Ano 4": {
+                "Estágio 1 - Aberturas": {
+                    "objetivos": ["Treinamento com ênfase em Aberturas"],
+                    "defaultTimePerDay": 90,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 27 }, { "topic": "Aberturas", "time": 63 }],
+                        "Terça": [{ "topic": "Tática", "time": 27 }, { "topic": "Aberturas", "time": 63 }],
+                        "Quarta": [{ "topic": "Tática", "time": 27 }, { "topic": "Aberturas", "time": 63 }],
+                        "Quinta": [{ "topic": "Tática", "time": 27 }, { "topic": "Aberturas", "time": 63 }],
+                        "Sexta": [{ "topic": "Aberturas", "time": 45 }, { "topic": "Partidas Online", "time": 45 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 90 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 2 - Finais": {
+                    "objetivos": ["Treinamento com ênfase em Finais"],
+                    "defaultTimePerDay": 90,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 27 }, { "topic": "Finais", "time": 63 }],
+                        "Terça": [{ "topic": "Tática", "time": 27 }, { "topic": "Finais", "time": 63 }],
+                        "Quarta": [{ "topic": "Tática", "time": 27 }, { "topic": "Finais", "time": 63 }],
+                        "Quinta": [{ "topic": "Tática", "time": 27 }, { "topic": "Finais", "time": 63 }],
+                        "Sexta": [{ "topic": "Finais", "time": 45 }, { "topic": "Partidas Online", "time": 45 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 90 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 3 - Estratégia": {
+                    "objetivos": ["Treinamento com ênfase em Estratégia"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 84 }],
+                        "Terça": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 84 }],
+                        "Quarta": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 84 }],
+                        "Quinta": [{ "topic": "Tática", "time": 36 }, { "topic": "Estratégia", "time": 84 }],
+                        "Sexta": [{ "topic": "Estratégia", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 4 - Cálculo": {
+                    "objetivos": ["Treinamento com ênfase em Cálculo"],
+                    "defaultTimePerDay": 120,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 84 }],
+                        "Terça": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 84 }],
+                        "Quarta": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 84 }],
+                        "Quinta": [{ "topic": "Tática", "time": 36 }, { "topic": "Cálculo", "time": 84 }],
+                        "Sexta": [{ "topic": "Cálculo", "time": 60 }, { "topic": "Partidas Online", "time": 60 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 120 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                },
+                "Estágio 5 - Manutenção": {
+                    "objetivos": ["Treinamento de Manutenção"],
+                    "defaultTimePerDay": 60,
+                    "schedule": {
+                        "Segunda": [{ "topic": "Tática", "time": 15 }, { "topic": "Geral", "time": 27 }, { "topic": "Aberturas", "time": 18 }],
+                        "Terça": [{ "topic": "Tática", "time": 15 }, { "topic": "Estratégia", "time": 27 }, { "topic": "Finais", "time": 18 }],
+                        "Quarta": [{ "topic": "Tática", "time": 15 }, { "topic": "Geral", "time": 27 }, { "topic": "Aberturas", "time": 18 }],
+                        "Quinta": [{ "topic": "Tática", "time": 15 }, { "topic": "Estratégia", "time": 27 }, { "topic": "Finais", "time": 18 }],
+                        "Sexta": [{ "topic": "Aberturas", "time": 30 }, { "topic": "Partidas Online", "time": 30 }],
+                        "Sábado": [{ "topic": "Partidas Online", "time": 60 }],
+                        "Domingo": [{ "topic": "Revisão/Descanso", "time": 0 }]
+                    }
+                }
+            }
+        };
+
+        // --- Mapeamento de Tópicos para Chaves da Bibliografia ---
+        const topicToBibKey = {
+            "Geral": "Geral",
+            "Tática": "Tática",
+            "Cálculo": "Cálculo",
+            "Partidas Completas": "Partidas",
+            "Partidas": "Partidas",
+            "Finais": "Finais",
+            "Aberturas": "Aberturas",
+            "Estratégia": "Estratégia",
+            "Cursos Online": "Cursos Online"
+        };
+        
+        // --- Funções do Firestore (Definidas PRIMEIRO) ---
+        function getProgressDocRef() {
+            if (!userId || !appId) {
+                console.warn("getProgressDocRef chamado sem userId ou appId");
+                return null;
+            }
+            // Caminho privado do usuário: /artifacts/{appId}/users/{userId}/progress/{docId}
+            return doc(db, 'artifacts', appId, 'users', userId, 'progress', PROGRESS_DOC_ID);
+        }
+
+        async function loadProgressFromFirestore() {
+            const docRef = getProgressDocRef();
+            if (!docRef) return;
+
+            try {
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    completedTitles = docSnap.data().completedTitles || [];
+                    console.log("Progresso carregado:", completedTitles.length, "itens concluídos.");
+                } else {
+                    console.log("Nenhum documento de progresso encontrado. Começando do zero.");
+                    completedTitles = [];
+                }
+            } catch (error) {
+                console.error("Erro ao carregar progresso:", error);
+            }
+        }
+
+        async function saveProgressToFirestore() {
+            const docRef = getProgressDocRef();
+            if (!docRef) {
+                 console.error("Não foi possível salvar o progresso: docRef é nulo.");
+                return;
+            }
+
+            try {
+                // Salva o array de títulos concluídos no Firestore
+                await setDoc(docRef, { completedTitles: completedTitles }, { merge: true });
+                console.log("Progresso salvo no Firestore.");
+            } catch (error) {
+                console.error("Erro ao salvar progresso:", error);
+            }
+        }
+
+        // --- Funções do Aplicativo (Definidas PRIMEIRO) ---
+        
+        // NOVO: Funções de mensagem de erro
+        function showErrorMessage(message) {
+            if (errorMessageDiv && errorTextSpan) {
+                errorTextSpan.textContent = ' ' + message;
+                errorMessageDiv.classList.remove('hidden');
+            } else {
+                console.error("Div de erro não encontrada. Mensagem:", message); // Fallback
+            }
+        }
+
+        function hideErrorMessage() {
+            if (errorMessageDiv) {
+                errorMessageDiv.classList.add('hidden');
+            }
+        }
+
+
+        function populateOpeningSelects() {
+            const selects = [openingWhiteSelect, openingBlack1Select, openingBlack2Select];
+            
+            for (const [key, value] of Object.entries(openingOptions)) {
+                const option = document.createElement('option');
+                option.value = key;
+                option.textContent = value;
+                
+                selects.forEach(select => {
+                    if (select) select.appendChild(option.cloneNode(true));
+                });
+            }
+        }
+
+        function renderObjectives(objectives) {
+            objectivesList.innerHTML = '';
+            if (!objectives || objectives.length === 0) {
+                objectivesList.innerHTML = '<li>Nenhum objetivo específico listado para este estágio.</li>';
+                return;
+            }
+            objectives.forEach(obj => {
+                const li = document.createElement('li');
+                li.textContent = obj;
+                objectivesList.appendChild(li);
+            });
+        }
+
+        function renderSchedule(schedule, factor) {
+            scheduleBody.innerHTML = '';
+            const days = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"];
+
+            days.forEach(day => {
+                const daySchedule = schedule[day] || [{ topic: "Descanso", time: 0 }];
+                const row = document.createElement('tr');
+
+                const cellDay = document.createElement('td');
+                cellDay.innerHTML = `<strong>${day}</strong>`;
+                row.appendChild(cellDay);
+
+                const cellActivity = document.createElement('td');
+                let activityHTML = '';
+
+                if (daySchedule[0].topic === "Descanso" || daySchedule[0].time === 0) {
+                    activityHTML = '<span>Descanso / Revisão Livre</span>';
+                } else {
+                    activityHTML = daySchedule.map(activity => {
+                        const calculatedTime = Math.round(activity.time * factor);
+                        if (calculatedTime === 0) return '';
+
+                        let buttonHTML = '';
+                        const bibKey = topicToBibKey[activity.topic];
+                        if (bibKey) {
+                            buttonHTML = `<button class="material-btn" data-key="${bibKey.toLowerCase()}">Ver Material 📚</button>`;
+                        }
+
+                        return `<div class="mb-1">
+                                    <span>${activity.topic} (${calculatedTime} min)</span>
+                                    ${buttonHTML}
+                               </div>`;
+                    }).join('');
+                }
+
+                cellActivity.innerHTML = activityHTML;
+                row.appendChild(cellActivity);
+                scheduleBody.appendChild(row);
+            });
+
+            // Adicionar event listeners aos novos botões
+            document.querySelectorAll('.material-btn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const bibKey = e.target.getAttribute('data-key');
+                    if (bibKey) {
+                        goToBibliography(bibKey);
+                    }
+                });
+            });
+        }
+
+        // FUNÇÃO ATUALIZADA
+        function renderBibliographyTabs(bibliography, userRating, focusedOpenings, selectedYear) {
+            tabsContainer.innerHTML = '';
+            tabsContentContainer.innerHTML = '';
+            let isFirstTab = true;
+            let hasAnyContent = false;
+
+            // Define o nível de dificuldade máximo com base no ano
+            const maxDifficulty = parseInt((selectedYear || 'Ano 1').replace('Ano ', ''), 10);
+
+            for (const key in bibliography) {
+                const materials = bibliography[key] || [];
+
+                // --- FILTRO 1: RATING ---
+                let filteredMaterials = (isNaN(userRating) || userRating <= 0)
+                    ? materials
+                    : materials.filter(material => material.min <= userRating && userRating <= material.max);
+                
+                // --- FILTRO 1.5: DIFICULDADE (ANO) ---
+                filteredMaterials = filteredMaterials.filter(material => {
+                    // Se o material não tiver dificuldade definida, assume 1
+                    const difficulty = material.difficulty || 1;
+                    return difficulty <= maxDifficulty;
+                });
+
+                // --- PRIORITIZAÇÃO (SORT) ---
+                // Prioriza a dificuldade mais alta (Ano 3 mostra diff 3 primeiro)
+                filteredMaterials.sort((a, b) => (b.difficulty || 1) - (a.difficulty || 1));
+
+                // --- FILTRO 2: ABERTURAS ---
+                if ((key === "Aberturas" || key === "Cursos Online") && focusedOpenings.length > 0) {
+                    filteredMaterials = filteredMaterials.filter(material => {
+                        const tags = material.tags || [];
+                        if (tags.length === 0) return key === "Cursos Online"; // Mantém cursos não-abertura
+                        if (tags.includes('repertorio_completo')) return true;
+                        return tags.some(tag => focusedOpenings.includes(tag));
+                    });
+                }
+
+                // --- FILTRO 3: PRIORIDADE (O NOVO SISTEMA) ---
+                const completed = [];
+                const uncompleted = [];
+                filteredMaterials.forEach(material => {
+                    if (completedTitles.includes(material.title)) {
+                        completed.push(material);
+                    } else {
+                        uncompleted.push(material);
+                    }
+                });
+
+                const displayList = [...completed, ...uncompleted.slice(0, ITEMS_PER_PAGE)];
+
+                if (displayList.length > 0) {
+                    hasAnyContent = true;
+                    const tabKey = key.toLowerCase();
+
+                    // 1. Criar o Botão da Aba
+                    const tabButton = document.createElement('button');
+                    tabButton.className = `tab-button ${isFirstTab ? 'active' : ''}`;
+                    tabButton.textContent = key;
+                    tabButton.setAttribute('data-tab', tabKey);
+                    tabsContainer.appendChild(tabButton);
+
+                    // 2. Criar o Conteúdo da Aba
+                    const tabContent = document.createElement('div');
+                    tabContent.id = tabKey;
+                    tabContent.className = `tab-content ${isFirstTab ? 'active' : ''}`;
+
+                    const ul = document.createElement('ul');
+                    displayList.forEach(material => {
+                        const li = document.createElement('li');
+                        const isChecked = completedTitles.includes(material.title);
+                        const uniqueId = `bib-${material.title.replace(/[^a-zA-Z0-9]/g, '-')}`;
+
+                        li.innerHTML = `
+                            <input type="checkbox" id="${uniqueId}" 
+                                   data-title="${material.title}" 
+                                   class="bib-checkbox" 
+                                   onchange="handleBiblioProgressChange(event)"
+                                   ${isChecked ? 'checked' : ''}>
+                            <label for="${uniqueId}" class="${isChecked ? 'completed-item' : ''}">
+                                ${material.title} 
+                            </label>
+                        `;
+                        ul.appendChild(li);
+                    });
+                    tabContent.appendChild(ul);
+                    tabsContentContainer.appendChild(tabContent);
+
+                    isFirstTab = false;
+                }
+            }
+
+            if (!hasAnyContent) {
+                tabsContentContainer.innerHTML = `<div class="no-material-msg">Nenhum material de bibliografia encontrado para este estágio ou para os filtros informados.</div>`;
+            }
+
+            // Adicionar event listeners às abas
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    const tabId = e.target.getAttribute('data-tab');
+                    if (!tabId) return;
+
+                    document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+                    e.target.classList.add('active');
+                    const contentEl = document.getElementById(tabId);
+                    if (contentEl) {
+                        contentEl.classList.add('active');
+                    }
+                });
+            });
+        }
+
+        function goToBibliography(tabKey) {
+            const tabButton = document.querySelector(`.tab-button[data-tab="${tabKey}"]`);
+            const tabContent = document.getElementById(tabKey);
+
+            if (tabButton && tabContent) {
+                document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+                tabButton.classList.add('active');
+                tabContent.classList.add('active');
+
+                const bibliographySection = document.getElementById('bibliography-section');
+                bibliographySection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+        }
+
+
+        // --- Lógica Principal do Aplicativo ---
+        function initializeAppLogic() {
+            // --- Inicializar Elementos do DOM ---
+            levelSelect = document.getElementById('level-select');
+            stageSelect = document.getElementById('stage-select');
+            ratingInput = document.getElementById('rating-input');
+            timeInput = document.getElementById('time-input');
+            generateBtn = document.getElementById('generate-btn');
+            outputContainer = document.getElementById('output-container');
+            objectivesList = document.getElementById('objectives-list');
+            totalTimeEl = document.getElementById('total-time');
+            scheduleBody = document.getElementById('schedule-body');
+            tabsContainer = document.getElementById('tabs-container');
+            tabsContentContainer = document.getElementById('tabs-content-container');
+            openingWhiteSelect = document.getElementById('opening-white-select');
+            openingBlack1Select = document.getElementById('opening-black1-select');
+            openingBlack2Select = document.getElementById('opening-black2-select');
+            // NOVO: Pegar elementos de erro
+            errorMessageDiv = document.getElementById('error-message');
+            errorTextSpan = document.getElementById('error-text');
+            
+            // Agora `populateOpeningSelects` está definida
+            populateOpeningSelects();
+
+            // 1. Atualizar Estágios quando o Ano mudar
+            levelSelect.addEventListener('change', () => {
+                const selectedLevel = levelSelect.value;
+                stageSelect.innerHTML = '<option value="">-- Escolha um foco --</option>'; // Reset
+                stageSelect.disabled = true;
+
+                if (selectedLevel && trainingData[selectedLevel]) {
+                    const stages = trainingData[selectedLevel];
+                    Object.keys(stages).forEach(stageName => {
+                        const option = document.createElement('option');
+                        option.value = stageName;
+                        option.textContent = stageName;
+                        stageSelect.appendChild(option);
+                    });
+                    stageSelect.disabled = false;
+                }
+            });
+
+            // 2. Gerar o Cronograma (COM VERIFICAÇÃO DE ERRO)
+            generateBtn.addEventListener('click', () => {
+                hideErrorMessage(); // Esconde erros antigos
+                
+                const level = levelSelect.value;
+                const stage = stageSelect.value;
+                const userRating = parseInt(ratingInput.value, 10);
+
+                const whiteOpening = openingWhiteSelect.value;
+                const blackOpening1 = openingBlack1Select.value;
+                const blackOpening2 = openingBlack2Select.value;
+                const focusedOpenings = [...new Set([whiteOpening, blackOpening1, blackOpening2].filter(Boolean))];
+
+                // NOVO: Checagem com mensagem de erro
+                if (!level || !stage) {
+                    showErrorMessage('Por favor, selecione um Ano e um Foco para continuar.');
+                    return;
+                }
+
+                const stageData = trainingData[level][stage];
+                const bibliography = masterBibliography;
+
+                // Salvar filtros para re-renderização
+                lastFilters = { bibliography, userRating, focusedOpenings, selectedYear: level };
+
+                // 1. Calcular tempo
+                const defaultTime = stageData.defaultTimePerDay;
+                const userTime = parseInt(timeInput.value, 10);
+                const dailyTime = userTime > 0 ? userTime : defaultTime;
+                const factor = dailyTime / defaultTime;
+                totalTimeEl.textContent = dailyTime;
+
+                // 2. Renderizar Objetivos
+                renderObjectives(stageData.objetivos);
+
+                // 3. Renderizar Cronograma
+                renderSchedule(stageData.schedule, factor);
+
+                // 4. Renderizar Bibliografia (agora com filtro de dificuldade/ano)
+                renderBibliographyTabs(bibliography, userRating, focusedOpenings, level);
+
+                // 5. Mostrar saída
+                outputContainer.classList.remove('hidden');
+            });
+        }
+
+        window.handleBiblioProgressChange = async function(event) {
+            const title = event.target.dataset.title;
+            const isChecked = event.target.checked;
+            const label = event.target.nextElementSibling;
+
+            // Atualizar UI imediatamente
+            if (isChecked) {
+                if (!completedTitles.includes(title)) {
+                    completedTitles.push(title);
+                }
+                label.classList.add('completed-item');
+            } else {
+                completedTitles = completedTitles.filter(t => t !== title);
+                label.classList.remove('completed-item');
+            }
+
+            // 1. Salvar no Firestore
+            await saveProgressToFirestore();
+
+            // 2. Re-renderizar a bibliografia para mostrar o próximo item
+            renderBibliographyTabs(lastFilters.bibliography, lastFilters.userRating, lastFilters.focusedOpenings, lastFilters.selectedYear);
+        }
+
+        // --- PONTO DE ENTRADA (MOVIDO PARA O FIM) ---
+        // Este listener só roda depois que o HTML foi carregado
+        document.addEventListener('DOMContentLoaded', () => {
+            // Obter configuração do ambiente (Canvas)
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+            let firebaseConfig;
+            try {
+                firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+            } catch (e) {
+                console.error("Erro ao analisar a configuração do Firebase:", e);
+                return;
+            }
+
+            if (!firebaseConfig.apiKey) {
+                console.warn("Configuração do Firebase não encontrada. Usando modo offline.");
+                // Mesmo offline, tentamos inicializar a lógica do app para que ele funcione sem salvar
+                initializeAppLogic();
+                return;
+            }
+
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+            } catch(e) {
+                 console.error("Erro ao inicializar Firebase:", e);
+                 // Tentar rodar o app mesmo sem firebase
+                 initializeAppLogic();
+                 return;
+            }
+
+
+            // 2. Observador de Autenticação
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    // Usuário está logado
+                    userId = user.uid;
+                    console.log("Usuário autenticado:", userId);
+                    // Carregar o progresso do usuário do Firestore
+                    await loadProgressFromFirestore();
+                    // Inicializar o aplicativo (popular seletores, adicionar listeners)
+                    initializeAppLogic();
+                } else {
+                    // Ninguém logado, tentar autenticar
+                    console.log("Nenhum usuário. Tentando autenticar...");
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Erro na autenticação:", error);
+                        // Falha na autenticação, mas ainda tenta rodar o app (sem salvar)
+                        initializeAppLogic();
+                    }
+                }
+            });
+        });
+
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a1a;
+            color: #f0f0f0;
+        }
+
+        .container {
+            max-width: 1000px;
+            margin: 2rem auto;
+            padding: 1.5rem;
+            background-color: #262626;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        }
+
+        .control-panel {
+            background-color: #333;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        select,
+        input[type="number"] {
+            width: 100%;
+            padding: 0.75rem;
+            border-radius: 8px;
+            border: 1px solid #555;
+            background-color: #444;
+            color: #f0f0f0;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+        }
+
+        select:focus,
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #a855f7;
+            /* Roxo */
+            box-shadow: 0 0 0 3px rgba(168, 85, 247, 0.3);
+        }
+
+        .btn {
+            background-color: #8b5cf6;
+            /* Roxo mais claro */
+            color: #ffffff;
+            font-weight: 600;
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            width: 100%;
+            font-size: 1.1rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .btn:hover {
+            background-color: #a855f7;
+            /* Roxo mais escuro */
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(168, 85, 247, 0.3);
+        }
+
+        .output-section {
+            background-color: #333;
+            padding: 1.5rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+
+        h2 {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #d8b4fe;
+            /* Roxo claro */
+            border-bottom: 2px solid #555;
+            padding-bottom: 0.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #c084fc;
+            margin-top: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        ul {
+            list-style-type: none;
+            padding-left: 0;
+        }
+
+        /* Estilo para lista de Objetivos (com '✓') */
+        #objectives-list li {
+            position: relative;
+            padding-left: 1.75rem;
+            margin-bottom: 0.75rem;
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        #objectives-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            top: 0;
+            color: #a855f7;
+            font-weight: 700;
+            font-size: 1.25rem;
+        }
+
+        /* Estilo para lista de Bibliografia (com checkbox) */
+        #bibliography-section ul li {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0.75rem;
+            font-size: 1rem;
+        }
+        
+        #bibliography-section ul li::before {
+             content: none; /* Remove o '✓' da bibliografia */
+        }
+        
+        .bib-checkbox {
+            width: auto; /* Sobrescreve o w-full */
+            flex-shrink: 0;
+            margin-right: 12px;
+            transform: scale(1.2);
+            accent-color: #a855f7;
+        }
+
+        #bibliography-section ul li label {
+            line-height: 1.6;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .completed-item {
+            text-decoration: line-through;
+            color: #777;
+        }
+
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 1rem;
+            table-layout: fixed;
+        }
+
+        th,
+        td {
+            border: 1px solid #555;
+            padding: 1rem;
+            text-align: left;
+            word-wrap: break-word;
+        }
+
+        th {
+            background-color: #444;
+            color: #d8b4fe;
+            font-weight: 600;
+        }
+
+        td {
+            background-color: #3b3b3b;
+        }
+
+        td strong {
+            color: #f0f0f0;
+            font-weight: 600;
+        }
+
+        /* Estilo das Abas de Bibliografia */
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            border-bottom: 2px solid #555;
+            margin-bottom: 1.5rem;
+        }
+
+        .tab-button {
+            padding: 0.75rem 1.25rem;
+            cursor: pointer;
+            background-color: transparent;
+            border: none;
+            color: #aaa;
+            font-weight: 500;
+            font-size: 1rem;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .tab-button:hover {
+            color: #d8b4fe;
+        }
+
+        .tab-button.active {
+            color: #f0f0f0;
+            font-weight: 600;
+            border-bottom-color: #a855f7;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .material-btn {
+            display: inline-block;
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            margin-left: 8px;
+            background-color: #6d28d9;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            border: none;
+        }
+
+        .material-btn:hover {
+            background-color: #a855f7;
+        }
+
+        /* Mensagem de "Nenhum material" */
+        .no-material-msg {
+            padding: 1rem;
+            background-color: #444;
+            border-radius: 8px;
+            color: #ccc;
+            text-align: center;
+            font-style: italic;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                margin: 1rem;
+                padding: 1rem;
+            }
+
+            .control-panel,
+            .output-section {
+                padding: 1rem;
+            }
+
+            th,
+            td {
+                padding: 0.75rem;
+            }
+
+            .tab-button {
+                font-size: 0.9rem;
+                padding: 0.5rem 0.75rem;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl font-bold text-white">Método de Treinamento de Xadrez</h1>
+            <p class="text-lg text-gray-300 mt-2">Encontre seu plano de estudo anual.</p>
+        </header>
+
+        <!-- Painel de Controle -->
+        <div class="control-panel grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+            <div>
+                <label for="level-select" class="block mb-2 font-medium text-gray-200">1. Selecione o Ano:</label>
+                <select id="level-select">
+                    <option value="">-- Escolha um ano --</option>
+                    <option value="Ano 1">Ano 1</option>
+                    <option value="Ano 2">Ano 2</option>
+                    <option value="Ano 3">Ano 3</option>
+                    <option value="Ano 4">Ano 4</option>
+                </select>
+            </div>
+            <div>
+                <label for="stage-select" class="block mb-2 font-medium text-gray-200">2. Selecione o Foco:</label>
+                <select id="stage-select" disabled>
+                    <option value="">-- Primeiro escolha um ano --</option>
+                </select>
+            </div>
+            <div>
+                <label for="rating-input" class="block mb-2 font-medium text-gray-200">3. Informe seu Rating:</label>
+                <input type="number" id="rating-input" placeholder="Ex: 1500 (filtra biblio)"
+                    class="placeholder-gray-500">
+            </div>
+
+            <!-- NOVA SEÇÃO DE ABERTURAS -->
+            <div class="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-6 mt-4">
+                <div>
+                    <label for="opening-white-select" class="block mb-2 font-medium text-gray-200">4. Foco (Brancas):</label>
+                    <select id="opening-white-select">
+                        <option value="">-- Todas Aberturas --</option>
+                        <!-- Options will be populated by JS -->
+                    </select>
+                </div>
+                <div>
+                    <label for="opening-black1-select" class="block mb-2 font-medium text-gray-200">5. Foco (Pretas 1):</label>
+                    <select id="opening-black1-select">
+                        <option value="">-- Todas Defesas --</option>
+                        <!-- Options will be populated by JS -->
+                    </select>
+                </div>
+                <div>
+                    <label for="opening-black2-select" class="block mb-2 font-medium text-gray-200">6. Foco (Pretas 2):</label>
+                    <select id="opening-black2-select">
+                        <option value="">-- Todas Defesas --</option>
+                        <!-- Options will be populated by JS -->
+                    </select>
+                </div>
+            </div>
+
+            <div class="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-6 items-end mt-4">
+                <div>
+                    <label for="time-input" class="block mb-2 font-medium text-gray-200">7. Minutos por dia (opcional):</label>
+                    <input type="number" id="time-input" placeholder="Ex: 120"
+                        class="placeholder-gray-500">
+                </div>
+                <button id="generate-btn" class="btn">8. Gerar Cronograma</button>
+            </div>
+
+        </div>
+        
+        <!-- NOVO: Container de Mensagem de Erro -->
+        <div id="error-message" class="hidden bg-red-800 border border-red-600 text-white px-4 py-3 rounded-lg relative mb-6 shadow-lg" role="alert">
+            <strong class="font-bold">Erro!</strong>
+            <span class="block sm:inline" id="error-text"></span>
+            <span class="absolute top-0 bottom-0 right-0 px-4 py-3" onclick="document.getElementById('error-message').classList.add('hidden')" style="cursor: pointer;">
+                <svg class="fill-current h-6 w-6 text-white" role="button" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><title>Fechar</title><path d="M14.348 14.849a1.2 1.2 0 0 1-1.697 0L10 11.819l-2.651 2.651a1.2 1.2 0 1 1-1.697-1.697L8.18 10 5.53 7.349a1.2 1.2 0 1 1 1.697-1.697L10 8.18l2.651-2.651a1.2 1.2 0 1 1 1.697 1.697L11.819 10l2.651 2.651a1.2 1.2 0 0 1 0 1.698z"/></svg>
+            </span>
+        </div>
+
+
+        <!-- Seção de Saída -->
+        <div id="output-container" class="hidden">
+            <!-- Objetivos -->
+            <div id="objectives-section" class="output-section">
+                <h2>🎯 Objetivos do Estágio</h2>
+                <ul id="objectives-list">
+                    <!-- Objetivos serão inseridos aqui -->
+                </ul>
+            </div>
+
+            <!-- Cronograma -->
+            <div id="schedule-section" class="output-section">
+                <h2>🗓️ Cronograma Semanal Sugerido</h2>
+                <p class="text-gray-300 mb-4">Tempo total de treino: <strong id="total-time" class="text-white"></strong>
+                    minutos por dia.</p>
+                <div class="overflow-x-auto rounded-lg shadow-md">
+                    <table id="schedule-table">
+                        <thead>
+                            <tr>
+                                <th class="w-1/4">Dia da Semana</th>
+                                <th>Atividades Planejadas</th>
+                            </tr>
+                        </thead>
+                        <tbody id="schedule-body">
+                            <!-- Linhas do cronograma serão inseridas aqui -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Bibliografia -->
+            <div id="bibliography-section" class="output-section">
+                <h2>📚 Bibliografia Recomendada (Progresso)</h2>
+                <div id="tabs-container" class="tabs">
+                    <!-- Abas serão inseridas aqui -->
+                </div>
+                <div id="tabs-content-container">
+                    <!-- Conteúdo das abas será inserido aqui -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- O SEGUNDO SCRIPT FOI REMOVIDO E SEU CONTEÚDO MOVIDO PARA O HEAD -->
+</body>
+</html>
